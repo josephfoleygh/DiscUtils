@@ -34,7 +34,7 @@ namespace DiscUtils.Internal;
 /// Can be use for two purposes - to ensure there is only one instance of a given object,
 /// and to prevent the need to recreate objects that are expensive to create.
 /// </remarks>
-internal class ObjectCache<K, V> where V : class
+public class ObjectCache<K, V> where V : class
 {
     private const int MostRecentListSize = 20;
     private const int PruneGap = 500;

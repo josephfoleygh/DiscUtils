@@ -35,7 +35,7 @@ namespace DiscUtils.Compression;
 /// <remarks>This is not a general purpose LZX decompressor - it makes
 /// simplifying assumptions, such as being able to load the entire stream
 /// contents into memory..</remarks>
-internal class LzxStream : ReadOnlyCompatibilityStream
+public class LzxStream : ReadOnlyCompatibilityStream
 {
     private static readonly uint[] _positionSlots;
     private static readonly uint[] _extraBits;
