@@ -45,11 +45,7 @@ internal class FileRecord : FixupRecordBase
 
     public uint AllocatedSize { get; private set; }
 
-    public List<AttributeRecord> Attributes { get; private set; }
-
     public FileRecordReference BaseFile { get; set; }
-
-    public AttributeRecord FirstAttribute => Attributes.Count > 0 ? Attributes[0] : null;
 
     public FileRecordFlags Flags { get; set; }
 

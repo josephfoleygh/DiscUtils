@@ -37,7 +37,7 @@ public sealed class StandardInformationAttribute : GenericAttribute
 {
     private readonly StandardInformation _si;
 
-    internal StandardInformationAttribute(INtfsContext context, AttributeRecord record)
+    internal StandardInformationAttribute(IHpfsContext context, AttributeRecord record)
         : base(context, record)
     {
         var content = Content.ReadAll();

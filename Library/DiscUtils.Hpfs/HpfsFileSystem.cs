@@ -39,8 +39,7 @@ namespace DiscUtils.Hpfs;
 /// <summary>
 /// Class for accessing NTFS file systems.
 /// </summary>
-public sealed class HpfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
-    IFileSystemWithClusterMap, IWindowsFileSystem, IDiagnosticTraceable
+public sealed class HpfsFileSystem : DiscFileSystem, IClusterBasedFileSystem, IDiagnosticTraceable
 {
     private const FileAttributes NonSettableFileAttributes =
         FileAttributes.Directory | FileAttributes.Offline | FileAttributes.ReparsePoint;
@@ -54,6 +53,11 @@ public sealed class HpfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     
     public VolumeInformation VolumeInfo { get; }
 
+    public uint StreamPositionFromLogicalSectorNumber(uint logicalSectorNumber)
+    {
+        return _context.BiosParameterBlock.BytesPerSector * logicalSectorNumber;
+    }
+    
     /// <summary>
     /// Initializes a new instance of the NtfsFileSystem class.
     /// </summary>
@@ -97,6 +101,10 @@ public sealed class HpfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
 
         _context.Spareblock = HpfsSpareblock.FromBytes(bytes);
 
+        stream.Position = StreamPositionFromLogicalSectorNumber(_context.Superblock.RootDirectoryFNode);
+        stream.ReadExactly(bytes);
+        _context.RootHpfsFNodeHeader = HpfsFNodeHeader.FromBytes(bytes);
+        
         if (HpfsOptions.ReadCacheEnabled)
         {
             var cacheSettings = new BlockCacheSettings

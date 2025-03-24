@@ -32,10 +32,10 @@ namespace DiscUtils.Hpfs.Internals;
 /// </remarks>
 public abstract class GenericAttribute : IAttributeLocator
 {
-    private readonly INtfsContext _context;
+    private readonly IHpfsContext _context;
     private readonly AttributeRecord _record;
 
-    internal GenericAttribute(INtfsContext context, AttributeRecord record)
+    internal GenericAttribute(IHpfsContext context, AttributeRecord record)
     {
         _context = context;
         _record = record;
@@ -85,7 +85,7 @@ public abstract class GenericAttribute : IAttributeLocator
 
     public long FirstFileCluster => _record.StartVcn;
 
-    internal static GenericAttribute FromAttributeRecord(INtfsContext context, AttributeRecord record)
+    internal static GenericAttribute FromAttributeRecord(IHpfsContext context, AttributeRecord record)
     {
         return record.AttributeType switch
         {

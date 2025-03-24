@@ -24,7 +24,7 @@ using System.IO;
 
 namespace DiscUtils.Hpfs;
 
-internal sealed class HpfsContext : INtfsContext
+internal sealed class HpfsContext : IHpfsContext
 {
     public Stream RawStream { get; set; }
 
@@ -33,19 +33,10 @@ internal sealed class HpfsContext : INtfsContext
     public UpperCase UpperCase { get; set; }
 
     public BiosParameterBlock BiosParameterBlock { get; set; }
-
-    public MasterFileTable Mft { get; set; }
+    
 
     public ClusterBitmap ClusterBitmap { get; set; }
-
-    public SecurityDescriptors SecurityDescriptors { get; set; }
-
-    public ObjectIds ObjectIds { get; set; }
-
-    public ReparsePoints ReparsePoints { get; set; }
-
-    public Quotas Quotas { get; set; }
-
+    
     public HpfsOptions Options { get; set; }
 
     public GetFileByIndexFn GetFileByIndex { get; set; }
@@ -63,4 +54,5 @@ internal sealed class HpfsContext : INtfsContext
     public bool ReadOnly { get; set; }
     public HpfsSuperblock Superblock { get; set; }
     public HpfsSpareblock Spareblock { get; set; }
+    public HpfsFNodeHeader RootHpfsFNodeHeader { get; set; }
 }

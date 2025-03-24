@@ -2,7 +2,7 @@ using System.IO;
 
 namespace DiscUtils.Hpfs;
 
-internal interface INtfsContext
+internal interface IHpfsContext
 {
     AllocateFileFn AllocateFile { get; }
 
@@ -22,20 +22,9 @@ internal interface INtfsContext
 
     GetFileByRefFn GetFileByRef { get; }
 
-    MasterFileTable Mft { get; }
-
-    ObjectIds ObjectIds { get; }
-
     HpfsOptions Options { get; }
-
-    Quotas Quotas { get; }
+    
     Stream RawStream { get; }
 
     bool ReadOnly { get; }
-
-    ReparsePoints ReparsePoints { get; }
-
-    SecurityDescriptors SecurityDescriptors { get; }
-
-    UpperCase UpperCase { get; }
 }

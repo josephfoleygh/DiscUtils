@@ -40,7 +40,7 @@ public sealed class AttributeListAttribute : GenericAttribute
 {
     private readonly AttributeList _list;
 
-    internal AttributeListAttribute(INtfsContext context, AttributeRecord record)
+    internal AttributeListAttribute(IHpfsContext context, AttributeRecord record)
         : base(context, record)
     {
         var content = Content.ReadAll();

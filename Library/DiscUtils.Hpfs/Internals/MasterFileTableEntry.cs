@@ -30,10 +30,10 @@ namespace DiscUtils.Hpfs.Internals;
 /// </summary>
 public sealed class MasterFileTableEntry
 {
-    private readonly INtfsContext _context;
+    private readonly IHpfsContext _context;
     private readonly FileRecord _fileRecord;
 
-    internal MasterFileTableEntry(INtfsContext context, FileRecord fileRecord)
+    internal MasterFileTableEntry(IHpfsContext context, FileRecord fileRecord)
     {
         _context = context;
         _fileRecord = fileRecord;

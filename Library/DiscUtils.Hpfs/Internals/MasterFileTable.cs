@@ -94,10 +94,10 @@ public sealed class MasterFileTable
     /// </summary>
     public const uint FirstNormalFileIndex = 24;
 
-    private readonly INtfsContext _context;
+    private readonly IHpfsContext _context;
     private readonly InternalMasterFileTable _mft;
 
-    internal MasterFileTable(INtfsContext context, InternalMasterFileTable mft)
+    internal MasterFileTable(IHpfsContext context, InternalMasterFileTable mft)
     {
         _context = context;
         _mft = mft;

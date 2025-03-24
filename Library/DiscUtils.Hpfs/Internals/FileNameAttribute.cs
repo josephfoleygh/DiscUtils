@@ -43,7 +43,7 @@ public sealed class FileNameAttribute : GenericAttribute
 {
     private readonly FileNameRecord _fnr;
 
-    internal FileNameAttribute(INtfsContext context, AttributeRecord record)
+    internal FileNameAttribute(IHpfsContext context, AttributeRecord record)
         : base(context, record)
     {
         var content = Content.ReadAll();

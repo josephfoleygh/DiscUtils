@@ -34,7 +34,7 @@ internal class Directory : File
 {
     private IndexView<FileNameRecord, FileRecordReference> _index;
 
-    public Directory(INtfsContext context, FileRecord baseRecord)
+    public Directory(IHpfsContext context, FileRecord baseRecord)
         : base(context, baseRecord) {}
 
     private IndexView<FileNameRecord, FileRecordReference> Index
@@ -91,7 +91,7 @@ internal class Directory : File
         return base.ToString() + Path.DirectorySeparatorChar;
     }
 
-    internal static new Directory CreateNew(INtfsContext context, NtfsFileAttributes parentDirFlags)
+    internal static new Directory CreateNew(IHpfsContext context, NtfsFileAttributes parentDirFlags)
     {
         var dir = (Directory)context.AllocateFile(FileRecordFlags.IsDirectory);
 

@@ -42,8 +42,6 @@ internal class HpfsFormatter
 
     public byte[] BootCode { get; set; }
 
-    public SecurityIdentifier ComputerAccount { get; set; }
-
     public Geometry DiskGeometry { get; set; }
 
     public long FirstSector { get; set; }
@@ -61,10 +59,7 @@ internal class HpfsFormatter
             AttributeDefinitions = new AttributeDefinitions()
         };
 
-        var localAdminString = ComputerAccount == null
-            ? "LA"
-            : new SecurityIdentifier(WellKnownSidType.AccountAdministratorSid, ComputerAccount).ToString();
-
+        
         using (NtfsTransaction.Begin())
         {
             _clusterSize = 4096;

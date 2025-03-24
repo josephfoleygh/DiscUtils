@@ -24,6 +24,6 @@ namespace DiscUtils.Hpfs.Internals;
 
 internal sealed class UnknownAttribute : GenericAttribute
 {
-    public UnknownAttribute(INtfsContext context, AttributeRecord record)
+    public UnknownAttribute(IHpfsContext context, AttributeRecord record)
         : base(context, record) {}
 }
