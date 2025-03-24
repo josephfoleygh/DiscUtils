@@ -32,7 +32,7 @@ internal class FileSystemFactory : VfsFileSystemFactory
 {
     public override IEnumerable<FileSystemInfo> Detect(Stream stream, VolumeInfo volume)
     {
-        if (NtfsFileSystem.Detect(stream))
+        if (HpfsFileSystem.Detect(stream))
         {
             return SingleValueEnumerable.Get(new VfsFileSystemInfo("NTFS", "Microsoft NTFS", Open));
         }
@@ -40,8 +40,8 @@ internal class FileSystemFactory : VfsFileSystemFactory
         return [];
     }
 
-    private NtfsFileSystem Open(Stream stream, VolumeInfo volumeInfo, FileSystemParameters parameters)
+    private HpfsFileSystem Open(Stream stream, VolumeInfo volumeInfo, FileSystemParameters parameters)
     {
-        return new NtfsFileSystem(stream);
+        return new HpfsFileSystem(stream);
     }
 }

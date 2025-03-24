@@ -109,7 +109,7 @@ internal class MasterFileTable : IDiagnosticTraceable, IDisposable
     private Bitmap _bitmap;
     private int _bytesPerSector;
     private readonly ObjectCache<long, FileRecord> _recordCache;
-    private readonly NtfsOptions _options;
+    private readonly HpfsOptions _options;
 
     private Stream _recordStream;
 

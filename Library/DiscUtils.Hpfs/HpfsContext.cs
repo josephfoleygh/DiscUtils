@@ -24,7 +24,7 @@ using System.IO;
 
 namespace DiscUtils.Hpfs;
 
-internal sealed class NtfsContext : INtfsContext
+internal sealed class HpfsContext : INtfsContext
 {
     public Stream RawStream { get; set; }
 
@@ -46,7 +46,7 @@ internal sealed class NtfsContext : INtfsContext
 
     public Quotas Quotas { get; set; }
 
-    public NtfsOptions Options { get; set; }
+    public HpfsOptions Options { get; set; }
 
     public GetFileByIndexFn GetFileByIndex { get; set; }
 
@@ -61,4 +61,6 @@ internal sealed class NtfsContext : INtfsContext
     public ForgetFileFn ForgetFile { get; set; }
 
     public bool ReadOnly { get; set; }
+    public HpfsSuperblock Superblock { get; set; }
+    public HpfsSpareblock Spareblock { get; set; }
 }

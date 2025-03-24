@@ -39,13 +39,13 @@ namespace DiscUtils.Hpfs;
 /// <summary>
 /// Class for accessing NTFS file systems.
 /// </summary>
-public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
+public sealed class HpfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     IFileSystemWithClusterMap, IWindowsFileSystem, IDiagnosticTraceable
 {
     private const FileAttributes NonSettableFileAttributes =
         FileAttributes.Directory | FileAttributes.Offline | FileAttributes.ReparsePoint;
 
-    private readonly NtfsContext _context;
+    private readonly HpfsContext _context;
 
     // Top-level file system structures
 
@@ -58,13 +58,13 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// Initializes a new instance of the NtfsFileSystem class.
     /// </summary>
     /// <param name="stream">The stream containing the NTFS file system.</param>
-    public NtfsFileSystem(Stream stream)
-        : base(new NtfsOptions())
+    public HpfsFileSystem(Stream stream)
+        : base(new HpfsOptions())
     {
-        _context = new NtfsContext
+        _context = new HpfsContext
         {
             RawStream = stream,
-            Options = NtfsOptions,
+            Options = HpfsOptions,
 
             GetFileByIndex = GetFile,
             GetFileByRef = GetFile,
@@ -84,10 +84,20 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
         _context.BiosParameterBlock = BiosParameterBlock.FromBytes(bytes);
         if (!_context.BiosParameterBlock.IsValid(stream.Length))
         {
-            throw new InvalidFileSystemException("BIOS Parameter Block is invalid for an NTFS file system");
+            throw new InvalidFileSystemException("BIOS Parameter Block is invalid for an HPFS file system");
         }
 
-        if (NtfsOptions.ReadCacheEnabled)
+        stream.Position = _context.BiosParameterBlock.BytesPerSector * 16;
+        stream.ReadExactly(bytes);
+
+        _context.Superblock = HpfsSuperblock.FromBytes(bytes);
+
+        stream.Position = _context.BiosParameterBlock.BytesPerSector * 17;
+        stream.ReadExactly(bytes);
+
+        _context.Spareblock = HpfsSpareblock.FromBytes(bytes);
+
+        if (HpfsOptions.ReadCacheEnabled)
         {
             var cacheSettings = new BlockCacheSettings
             {
@@ -111,85 +121,24 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
             _context.RawStream = new BlockCacheStream(SparseStream.FromStream(stream, Ownership.None),
                 Ownership.None, cacheSettings);
         }
-
-        // Bootstrap the Master File Table
-        _context.Mft = new MasterFileTable(_context);
-        var mftFile = new File(_context, _context.Mft.GetBootstrapRecord());
-        _fileCache[MasterFileTable.MftIndex] = mftFile;
-        _context.Mft.Initialize(mftFile);
-
-        // Get volume information (includes version number)
-        var volumeInfoFile = GetFile(MasterFileTable.VolumeIndex);
-        VolumeInfo =
-            volumeInfoFile.GetStream(AttributeType.VolumeInformation, null)?.GetContent<VolumeInformation>();
-
-        // Initialize access to the other well-known metadata files
-        _context.ClusterBitmap = new ClusterBitmap(GetFile(MasterFileTable.BitmapIndex));
-        _context.AttributeDefinitions = new AttributeDefinitions(GetFile(MasterFileTable.AttrDefIndex));
-        _context.UpperCase = new UpperCase(GetFile(MasterFileTable.UpCaseIndex));
-
-        if (VolumeInfo.Version >= VolumeInformation.VersionW2k)
-        {
-            _context.SecurityDescriptors = new SecurityDescriptors(GetFile(MasterFileTable.SecureIndex));
-            
-            if (GetDirectoryEntry(@"$Extend\$ObjId") is { } objIdFile)
-            {
-                _context.ObjectIds = new ObjectIds(GetFile(objIdFile.Reference));
-            }
-
-            if (GetDirectoryEntry(@"$Extend\$Reparse") is { } reparse)
-            {
-                _context.ReparsePoints = new ReparsePoints(GetFile(reparse.Reference));
-            }
-
-            if (GetDirectoryEntry(@"$Extend\$Quota") is { } quota)
-            {
-                _context.Quotas = new Quotas(GetFile(quota.Reference));
-            }
-        }
-
-#if false
-        byte[] buffer = new byte[1024];
-        for (int i = 0; i < buffer.Length; ++i)
-        {
-            buffer[i] = 0xFF;
-        }
-
-        using (var s = OpenFile("$LogFile", FileMode.Open, FileAccess.ReadWrite))
-        {
-            while (s.Position != s.Length)
-            {
-                s.Write(buffer, 0, (int)Math.Min(buffer.Length, s.Length - s.Position));
-            }
-        }
-#endif
     }
-
-    private bool CreateShortNames => _context.Options.ShortNameCreation == ShortFileNameOption.Enabled
-                   || (_context.Options.ShortNameCreation == ShortFileNameOption.UseVolumeFlag
-                       && (VolumeInfo.Flags & VolumeInformationFlags.DisableShortNameCreation) == 0);
-
+    
     /// <summary>
     /// Gets the friendly name for the file system.
     /// </summary>
-    public override string FriendlyName => "Microsoft NTFS";
+    public override string FriendlyName => "IBM/Microsoft HPFS";
 
     /// <summary>
     /// Gets the options that control how the file system is interpreted.
     /// </summary>
-    public NtfsOptions NtfsOptions => (NtfsOptions)Options;
+    public HpfsOptions HpfsOptions => (HpfsOptions)Options;
 
     /// <summary>
     /// Gets the volume label.
     /// </summary>
     public override string VolumeLabel
     {
-        get
-        {
-            var volumeFile = GetFile(MasterFileTable.VolumeIndex);
-            var volNameStream = volumeFile.GetStream(AttributeType.VolumeName, null);
-            return volNameStream?.GetContent<VolumeName>().Name;
-        }
+        get => _context.BiosParameterBlock.VolumeLabel;
     }
 
     /// <summary>
@@ -209,12 +158,10 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <summary>
     /// Gets the total number of clusters managed by the file system.
     /// </summary>
-    public long TotalClusters => MathUtilities.Ceil(_context.BiosParameterBlock.TotalSectors64,
+    public long TotalClusters => MathUtilities.Ceil(_context.BiosParameterBlock.TotalSectors32,
                 _context.BiosParameterBlock.SectorsPerCluster);
 
-    public long TotalSectors => _context.BiosParameterBlock.TotalSectors64;
-
-    public AttributeDefinitions AttributeDefinitions => _context.AttributeDefinitions;
+    public long TotalSectors => _context.BiosParameterBlock.TotalSectors32;
 
     /// <summary>
     /// Copies an existing file to a new file, allowing overwriting of an existing file.
@@ -224,6 +171,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="overwrite">Whether to permit over-writing of an existing file.</param>
     public override void CopyFile(string sourceFile, string destinationFile, bool overwrite)
     {
+        #if false
         using (NtfsTransaction.Begin())
         {
             var sourceParentDirEntry = GetDirectoryEntry(Utilities.GetDirectoryFromPath(sourceFile));
@@ -301,6 +249,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
             AddFileToDirectory(newFile, destParentDir, Utilities.GetFileFromPath(destinationFile), null);
             destParentDirEntry.Value.UpdateFrom(destParentDir);
         }
+#endif
     }
 
     /// <summary>
@@ -318,6 +267,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="path">The path of the directory to delete.</param>
     public override void DeleteDirectory(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             if (string.IsNullOrEmpty(path))
@@ -360,6 +310,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
                 dir.Delete();
             }
         }
+#endif
     }
 
     /// <summary>
@@ -393,6 +344,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="path">The path of the file to delete.</param>
     public override void DeleteFile(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             var dirEntryPath = ParsePath(path, out var attributeName, out var attributeType);
@@ -439,6 +391,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
                 file.RemoveStream(attrStream);
             }
         }
+#endif
     }
 
     /// <summary>
@@ -448,6 +401,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <returns>true if the directory exists.</returns>
     public override bool DirectoryExists(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             // Special case - root directory
@@ -459,6 +413,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
             var dirEntry = GetDirectoryEntry(path);
             return dirEntry != null && (dirEntry.Value.Details.FileAttributes & FileAttributes.Directory) != 0;
         }
+#endif
     }
 
     /// <summary>
@@ -468,6 +423,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <returns>true if the file exists.</returns>
     public override bool FileExists(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             var dirEntryPath = ParsePath(path, out var attributeName, out var attributeType);
@@ -494,7 +450,10 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
             }
 
             return true;
+
         }
+#endif
+        return false;
     }
 
     /// <summary>
@@ -564,6 +523,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
 
     internal bool FilterEntry(DirectoryIndexEntry entry)
     {
+        #if false
         // Weed out short-name entries for files and any hidden / system / metadata files.
         if ((entry.Key.Flags & NtfsFileAttributes.Hidden) != 0
             && _context.Options.HideHiddenFiles
@@ -576,7 +536,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
         {
             return false;
         }
-
+#endif
         return true;
     }
 
@@ -589,6 +549,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <returns>Array of files and subdirectories matching the search pattern.</returns>
     public override IEnumerable<string> GetFileSystemEntries(string path, string searchPattern)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             // TODO: Be smarter, use the B*Tree for better performance when the start of the pattern is known
@@ -609,6 +570,8 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
                 yield return result;
             }
         }
+#endif
+        return null;
     }
 
     /// <summary>
@@ -618,6 +581,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="destinationDirectoryName">The target directory name.</param>
     public override void MoveDirectory(string sourceDirectoryName, string destinationDirectoryName)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             using (NtfsTransaction.Begin())
@@ -661,6 +625,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
                 AddFileToDirectory(file, destParentDir, Utilities.GetFileFromPath(destinationDirectoryName), null);
             }
         }
+#endif
     }
 
     /// <summary>
@@ -671,6 +636,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="overwrite">Whether to permit a destination file to be overwritten.</param>
     public override void MoveFile(string sourceName, string destinationName, bool overwrite)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             var sourceParentDirEntry = GetDirectoryEntry(Utilities.GetDirectoryFromPath(sourceName));
@@ -723,6 +689,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
             RemoveFileFromDirectory(sourceParentDir, file, sourceEntry.Value.Details.FileName);
             AddFileToDirectory(file, destParentDir, Utilities.GetFileFromPath(destinationName), null);
         }
+#endif
     }
 
     /// <summary>
@@ -760,6 +727,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="newValue">The new attributes of the file or directory.</param>
     public override void SetAttributes(string path, FileAttributes newValue)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             var dirEntry = GetDirectoryEntry(path)
@@ -834,6 +802,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
             UpdateStandardInformation(dirEntry, file,
                 delegate(StandardInformation si) { si.FileAttributes = FileNameRecord.SetAttributes(newValue, si.FileAttributes); });
         }
+#endif
     }
 
     /// <summary>
@@ -843,6 +812,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <returns>The creation time.</returns>
     public override DateTime GetCreationTimeUtc(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             var dirEntry = GetDirectoryEntry(path)
@@ -850,6 +820,8 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
 
             return dirEntry.Details.CreationTime;
         }
+#endif
+        return DateTime.MinValue;
     }
 
     /// <summary>
@@ -859,10 +831,12 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="newTime">The new time to set.</param>
     public override void SetCreationTimeUtc(string path, DateTime newTime)
     {
+        #if false
         using (NtfsTransaction.Begin())
         {
             UpdateStandardInformation(path, delegate(StandardInformation si) { si.CreationTime = newTime; });
         }
+#endif
     }
 
     /// <summary>
@@ -872,6 +846,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <returns>The last access time.</returns>
     public override DateTime GetLastAccessTimeUtc(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             var dirEntry = GetDirectoryEntry(path)
@@ -879,6 +854,8 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
 
             return dirEntry.Details.LastAccessTime;
         }
+#endif
+        return DateTime.MinValue;
     }
 
     /// <summary>
@@ -888,10 +865,12 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="newTime">The new time to set.</param>
     public override void SetLastAccessTimeUtc(string path, DateTime newTime)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             UpdateStandardInformation(path, delegate(StandardInformation si) { si.LastAccessTime = newTime; });
         }
+#endif
     }
 
     /// <summary>
@@ -901,6 +880,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <returns>The last write time.</returns>
     public override DateTime GetLastWriteTimeUtc(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             var dirEntry = GetDirectoryEntry(path)
@@ -908,6 +888,8 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
 
             return dirEntry.Details.ModificationTime;
         }
+#endif
+        return DateTime.MinValue;
     }
 
     /// <summary>
@@ -917,10 +899,12 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="newTime">The new time to set.</param>
     public override void SetLastWriteTimeUtc(string path, DateTime newTime)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             UpdateStandardInformation(path, delegate(StandardInformation si) { si.ModificationTime = newTime; });
         }
+#endif
     }
 
     /// <summary>
@@ -930,6 +914,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <returns>The length in bytes.</returns>
     public override long GetFileLength(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             var dirEntryPath = ParsePath(path, out var attributeName, out var attributeType);
@@ -938,7 +923,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
                 ?? throw new FileNotFoundException("File not found", path);
 
             // Ordinary file length request, use info from directory entry for efficiency - if allowed
-            if (NtfsOptions.FileLengthFromDirectoryEntries && attributeName == null &&
+            if (HpfsOptions.FileLengthFromDirectoryEntries && attributeName == null &&
                 attributeType == AttributeType.Data)
             {
                 return (long)dirEntry.Details.RealSize;
@@ -951,10 +936,13 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
 
             return attr.Length;
         }
+#endif
+        return 0;
     }
 
     public override DiscFileInfo GetFileInfo(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             try
@@ -968,7 +956,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
                 }
 
                 // Ordinary file length request, use info from directory entry for efficiency - if allowed
-                if (NtfsOptions.FileLengthFromDirectoryEntries && attributeName == null &&
+                if (HpfsOptions.FileLengthFromDirectoryEntries && attributeName == null &&
                     attributeType == AttributeType.Data)
                 {
                     if (dirEntry.Value.Details.FileAttributes.HasFlag(FileAttributes.Directory))
@@ -996,10 +984,13 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
 
             return new(this, path);
         }
+#endif
+        return null;
     }
 
     public override DiscFileSystemInfo GetFileSystemInfo(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             try
@@ -1013,7 +1004,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
                 }
 
                 // Ordinary file length request, use info from directory entry for efficiency - if allowed
-                if (NtfsOptions.FileLengthFromDirectoryEntries && attributeName == null &&
+                if (HpfsOptions.FileLengthFromDirectoryEntries && attributeName == null &&
                     attributeType == AttributeType.Data)
                 {
                     if (dirEntry.Value.Details.FileAttributes.HasFlag(FileAttributes.Directory))
@@ -1043,10 +1034,13 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
 
             return new(this, path);
         }
+#endif
+        return null;
     }
 
     public override DiscDirectoryInfo GetDirectoryInfo(string path)
     {
+#if false
         using (NtfsTransaction.Begin())
         {
             try
@@ -1060,7 +1054,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
                 }
 
                 // Ordinary file length request, use info from directory entry for efficiency - if allowed
-                if (NtfsOptions.FileLengthFromDirectoryEntries && attributeName == null &&
+                if (HpfsOptions.FileLengthFromDirectoryEntries && attributeName == null &&
                     attributeType == AttributeType.Data &&
                     dirEntry.Value.Details.FileAttributes.HasFlag(FileAttributes.Directory))
                 {
@@ -1075,6 +1069,8 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
 
             return new(this, path);
         }
+#endif
+        return null;
     }
 
     /// <summary>
@@ -1177,22 +1173,16 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     }
 
     /// <summary>
-    /// Gets an object that can convert between clusters and files.
-    /// </summary>
-    /// <returns>The cluster map.</returns>
-    public ClusterMap BuildClusterMap()
-    {
-        return _context.Mft.GetClusterMap();
-    }
-
-    /// <summary>
     /// Reads the boot code of the file system into a byte array.
     /// </summary>
     /// <returns>The boot code, or <c>null</c> if not available.</returns>
     public override byte[] ReadBootCode()
     {
+        #if false
         using var s = OpenFile(@"\$Boot", FileMode.Open);
         return s.ReadExactly((int)s.Length);
+#endif
+        return null;
     }
 
     /// <summary>
@@ -1202,38 +1192,15 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="linePrefix">The indent to apply to the start of each line of output.</param>
     public void Dump(TextWriter writer, string linePrefix)
     {
-        writer.WriteLine($"{linePrefix}NTFS File System Dump");
+        writer.WriteLine($"{linePrefix}HPFS File System Dump");
         writer.WriteLine($"{linePrefix}=====================");
 
         ////_context.Mft.Dump(writer, linePrefix);
         writer.WriteLine(linePrefix);
         _context.BiosParameterBlock.Dump(writer, linePrefix);
-
-        if (_context.SecurityDescriptors != null)
-        {
-            writer.WriteLine(linePrefix);
-            _context.SecurityDescriptors.Dump(writer, linePrefix);
-        }
-
-        if (_context.ObjectIds != null)
-        {
-            writer.WriteLine(linePrefix);
-            _context.ObjectIds.Dump(writer, linePrefix);
-        }
-
-        if (_context.ReparsePoints != null)
-        {
-            writer.WriteLine(linePrefix);
-            _context.ReparsePoints.Dump(writer, linePrefix);
-        }
-
-        if (_context.Quotas != null)
-        {
-            writer.WriteLine(linePrefix);
-            _context.Quotas.Dump(writer, linePrefix);
-        }
-
+        
         writer.WriteLine(linePrefix);
+        #if false
         GetDirectory(MasterFileTable.RootDirIndex).Dump(writer, linePrefix);
 
         writer.WriteLine(linePrefix);
@@ -1265,375 +1232,9 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
         writer.WriteLine($"{linePrefix}DIRECTORY TREE");
         writer.WriteLine($"{linePrefix}{Path.DirectorySeparatorChar} (5)");
         DumpDirectory(GetDirectory(MasterFileTable.RootDirIndex), writer, linePrefix); // 5 = Root Dir
+#endif
     }
-
-    /// <summary>
-    /// Indicates whether the file is known by other names.
-    /// </summary>
-    /// <param name="path">The file to inspect.</param>
-    /// <returns><c>true</c> if the file has other names, else <c>false</c>.</returns>
-    public bool HasHardLinks(string path)
-    {
-        return GetHardLinkCount(path) > 1;
-    }
-
-    /// <summary>
-    /// Gets the security descriptor associated with the file or directory.
-    /// </summary>
-    /// <param name="path">The file or directory to inspect.</param>
-    /// <returns>The security descriptor.</returns>
-    public RawSecurityDescriptor GetSecurity(string path)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            var dirEntry = GetDirectoryEntry(path)
-                ?? throw new FileNotFoundException("File not found", path);
-
-            var file = GetFile(dirEntry.Reference);
-            return DoGetSecurity(file);
-        }
-    }
-
-    /// <summary>
-    /// Sets the security descriptor associated with the file or directory.
-    /// </summary>
-    /// <param name="path">The file or directory to change.</param>
-    /// <param name="securityDescriptor">The new security descriptor.</param>
-    public void SetSecurity(string path, RawSecurityDescriptor securityDescriptor)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            var dirEntry = GetDirectoryEntry(path)
-                ?? throw new FileNotFoundException("File not found", path);
-
-            var file = GetFile(dirEntry.Reference);
-            DoSetSecurity(file, securityDescriptor);
-
-            // Update the directory entry used to open the file
-            dirEntry.UpdateFrom(file);
-        }
-    }
-
-    /// <summary>
-    /// Removes the security descriptor associated with the file or directory.
-    /// </summary>
-    /// <param name="path">The file or directory to change.</param>
-    public void RemoveSecurity(string path)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            var dirEntry = GetDirectoryEntry(path);
-            if (dirEntry == null)
-            {
-                throw new FileNotFoundException("File not found", path);
-            }
-            else
-            {
-                var file = GetFile(dirEntry.Value.Reference);
-                DoRemoveSecurity(file);
-
-                // Update the directory entry used to open the file
-                dirEntry.Value.UpdateFrom(file);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Sets the reparse point data on a file or directory.
-    /// </summary>
-    /// <param name="path">The file to set the reparse point on.</param>
-    /// <param name="reparsePoint">The new reparse point.</param>
-    public void SetReparsePoint(string path, ReparsePoint reparsePoint)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            var dirEntry = GetDirectoryEntry(path)
-                ?? throw new FileNotFoundException("File not found", path);
-
-            var file = GetFile(dirEntry.Reference);
-
-            var stream = file.GetStream(AttributeType.ReparsePoint, null);
-            if (stream != null)
-            {
-                // If there's an existing reparse point, unhook it.
-                using var contentStream = stream.Value.Open(FileAccess.Read);
-                var rp = contentStream.ReadStruct<ReparsePointRecord>((int)contentStream.Length);
-                _context.ReparsePoints.Remove(rp.Tag, dirEntry.Reference);
-            }
-            else
-            {
-                stream = file.CreateStream(AttributeType.ReparsePoint, null);
-            }
-
-            // Set the new content
-            var newRp = new ReparsePointRecord
-            {
-                Tag = (uint)reparsePoint.Tag,
-                Content = reparsePoint.Content
-            };
-
-            var contentBuffer = ArrayPool<byte>.Shared.Rent(newRp.Size);
-            try
-            {
-                newRp.WriteTo(contentBuffer, 0);
-                using var contentStream = stream.Value.Open(FileAccess.ReadWrite);
-                contentStream.Write(contentBuffer, 0, newRp.Size);
-                contentStream.SetLength(newRp.Size);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(contentBuffer);
-            }
-
-            // Update the standard information attribute - so it reflects the actual file state
-            var stdInfoStream = file.GetStream(AttributeType.StandardInformation, null);
-            var si = stdInfoStream?.GetContent<StandardInformation>();
-            si.FileAttributes |= NtfsFileAttributes.ReparsePoint;
-            stdInfoStream?.SetContent(si);
-
-            // Update the directory entry used to open the file, so it's accurate
-            dirEntry.Details.EASizeOrReparsePointTag = newRp.Tag;
-            dirEntry.UpdateFrom(file);
-
-            // Write attribute changes back to the Master File Table
-            file.UpdateRecordInMft();
-
-            // Add the reparse point to the index
-            _context.ReparsePoints.Add(newRp.Tag, dirEntry.Reference);
-        }
-    }
-
-    /// <summary>
-    /// Gets the reparse point data associated with a file or directory.
-    /// </summary>
-    /// <param name="path">The file to query.</param>
-    /// <returns>The reparse point information.</returns>
-    public ReparsePoint GetReparsePoint(string path)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            var dirEntry = GetDirectoryEntry(path)
-                ?? throw new FileNotFoundException("File not found", path);
-
-            var file = GetFile(dirEntry.Reference);
-
-            var stream = file.GetStream(AttributeType.ReparsePoint, null);
-            if (stream != null)
-            {
-
-                using var contentStream = stream.Value.Open(FileAccess.Read);
-                var rp = contentStream.ReadStruct<ReparsePointRecord>((int)contentStream.Length);
-                return new ReparsePoint((int)rp.Tag, rp.Content);
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Removes a reparse point from a file or directory, without deleting the file or directory.
-    /// </summary>
-    /// <param name="path">The path to the file or directory to remove the reparse point from.</param>
-    public void RemoveReparsePoint(string path)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            var dirEntry = GetDirectoryEntry(path)
-                ?? throw new FileNotFoundException("File not found", path);
-
-            var file = GetFile(dirEntry.Reference);
-            RemoveReparsePoint(file);
-
-            // Update the directory entry used to open the file, so it's accurate
-            dirEntry.UpdateFrom(file);
-
-            // Write attribute changes back to the Master File Table
-            file.UpdateRecordInMft();
-        }
-    }
-
-    /// <summary>
-    /// Gets the short name for a given path.
-    /// </summary>
-    /// <param name="path">The path to convert.</param>
-    /// <returns>The short name.</returns>
-    /// <remarks>
-    /// This method only gets the short name for the final part of the path, to
-    /// convert a complete path, call this method repeatedly, once for each path
-    /// segment.  If there is no short name for the given path,<c>null</c> is
-    /// returned.
-    /// </remarks>
-    public string GetShortName(string path)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            var parentPath = Utilities.GetDirectoryFromPath(path);
-            var parentEntry = GetDirectoryEntry(parentPath);
-            if (parentEntry == null || (parentEntry.Value.Details.FileAttributes & FileAttributes.Directory) == 0)
-            {
-                throw new DirectoryNotFoundException("Parent directory not found");
-            }
-
-            var dir = GetDirectory(parentEntry.Value.Reference)
-                ?? throw new DirectoryNotFoundException("Parent directory not found");
-
-            var givenEntry = dir.GetEntryByName(Utilities.GetFileFromPath(path))
-                ?? throw new FileNotFoundException("Path not found", path);
-
-            if (givenEntry.Details.FileNameNamespace == FileNameNamespace.Dos)
-            {
-                return givenEntry.Details.FileName;
-            }
-
-            if (givenEntry.Details.FileNameNamespace == FileNameNamespace.Win32)
-            {
-                var file = GetFile(givenEntry.Reference);
-
-                foreach (var stream in file.GetStreams(AttributeType.FileName, null))
-                {
-                    var fnr = stream.GetContent<FileNameRecord>();
-                    if (fnr.ParentDirectory.Equals(givenEntry.Details.ParentDirectory)
-                        && fnr.FileNameNamespace == FileNameNamespace.Dos)
-                    {
-                        return fnr.FileName;
-                    }
-                }
-            }
-
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Sets the short name for a given file or directory.
-    /// </summary>
-    /// <param name="path">The full path to the file or directory to change.</param>
-    /// <param name="shortName">The shortName, which should not include a path.</param>
-    public void SetShortName(string path, string shortName)
-    {
-        if (!Utilities.Is8Dot3(shortName))
-        {
-            throw new ArgumentException("Short name is not a valid 8.3 file name", nameof(shortName));
-        }
-
-        using (NtfsTransaction.Begin())
-        {
-            var parentPath = Utilities.GetDirectoryFromPath(path);
-            var parentEntry = GetDirectoryEntry(parentPath);
-            if (parentEntry == null || (parentEntry.Value.Details.FileAttributes & FileAttributes.Directory) == 0)
-            {
-                throw new DirectoryNotFoundException("Parent directory not found");
-            }
-
-            var dir = GetDirectory(parentEntry.Value.Reference)
-                ?? throw new DirectoryNotFoundException("Parent directory not found");
-
-            var givenEntry = dir.GetEntryByName(Utilities.GetFileFromPath(path))
-                ?? throw new FileNotFoundException("Path not found", path);
-
-            var givenNamespace = givenEntry.Details.FileNameNamespace;
-            var file = GetFile(givenEntry.Reference);
-
-            if (givenNamespace == FileNameNamespace.Posix && file.HasWin32OrDosName)
-            {
-                throw new InvalidOperationException("Cannot set a short name on hard links");
-            }
-
-            // Convert Posix/Win32AndDos to just Win32
-            if (givenEntry.Details.FileNameNamespace != FileNameNamespace.Win32)
-            {
-                dir.RemoveEntry(givenEntry);
-                dir.AddEntry(file, givenEntry.Details.FileName, FileNameNamespace.Win32);
-            }
-
-            // Remove any existing Dos names, and set the new one
-            var nameStreams = new List<NtfsStream>(file.GetStreams(AttributeType.FileName, null));
-            foreach (var stream in nameStreams)
-            {
-                var fnr = stream.GetContent<FileNameRecord>();
-                if (fnr.ParentDirectory.Equals(givenEntry.Details.ParentDirectory)
-                    && fnr.FileNameNamespace == FileNameNamespace.Dos)
-                {
-                    var oldEntry = dir.GetEntryByName(fnr.FileName);
-                    dir.RemoveEntry(oldEntry.Value);
-                }
-            }
-
-            dir.AddEntry(file, shortName, FileNameNamespace.Dos);
-
-            parentEntry.Value.UpdateFrom(dir);
-        }
-    }
-
-    /// <summary>
-    /// Gets the standard file information for a file.
-    /// </summary>
-    /// <param name="path">The full path to the file or directory to query.</param>
-    /// <returns>The standard file information.</returns>
-    public WindowsFileInformation GetFileStandardInformation(string path)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            var dirEntry = GetDirectoryEntry(path)
-                ?? throw new FileNotFoundException("File not found", path);
-
-            var file = GetFile(dirEntry.Reference);
-            var si = file.StandardInformation;
-
-            return new WindowsFileInformation
-            {
-                CreationTime = si.CreationTime,
-                LastAccessTime = si.LastAccessTime,
-                ChangeTime = si.MftChangedTime,
-                LastWriteTime = si.ModificationTime,
-                FileAttributes = StandardInformation.ConvertFlags(si.FileAttributes, file.IsDirectory)
-            };
-        }
-    }
-
-    /// <summary>
-    /// Sets the standard file information for a file.
-    /// </summary>
-    /// <param name="path">The full path to the file or directory to query.</param>
-    /// <param name="info">The standard file information.</param>
-    public void SetFileStandardInformation(string path, WindowsFileInformation info)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            UpdateStandardInformation(
-                path,
-                delegate(StandardInformation si)
-                {
-                    si.CreationTime = info.CreationTime;
-                    si.LastAccessTime = info.LastAccessTime;
-                    si.MftChangedTime = info.ChangeTime;
-                    si.ModificationTime = info.LastWriteTime;
-                    si.FileAttributes = StandardInformation.SetFileAttributes(info.FileAttributes, si.FileAttributes);
-                });
-        }
-    }
-
-    /// <summary>
-    /// Gets the file id for a given path.
-    /// </summary>
-    /// <param name="path">The path to get the id of.</param>
-    /// <returns>The file id.</returns>
-    /// <remarks>
-    /// The returned file id includes the MFT index of the primary file record for the file.
-    /// The file id can be used to determine if two paths refer to the same actual file.
-    /// The MFT index is held in the lower 48 bits of the id.
-    /// </remarks>
-    public long GetFileId(string path)
-    {
-        using (NtfsTransaction.Begin())
-        {
-            var dirEntry = GetDirectoryEntry(path)
-                ?? throw new FileNotFoundException("File not found", path);
-
-            return (long)dirEntry.Reference.Value;
-        }
-    }
-
+    
     /// <summary>
     /// Gets the names of the alternate data streams for a file.
     /// </summary>
@@ -1668,14 +1269,14 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="firstSector">The first sector of the new file system on the disk.</param>
     /// <param name="sectorCount">The number of sectors allocated to the new file system on the disk.</param>
     /// <returns>The newly-initialized file system.</returns>
-    public static NtfsFileSystem Format(
+    public static HpfsFileSystem Format(
         Stream stream,
         string label,
         Geometry diskGeometry,
         long firstSector,
         long sectorCount)
     {
-        var formatter = new NtfsFormatter
+        var formatter = new HpfsFormatter
         {
             Label = label,
             DiskGeometry = diskGeometry,
@@ -1695,7 +1296,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="sectorCount">The number of sectors allocated to the new file system on the disk.</param>
     /// <param name="bootCode">The Operating System's boot code.</param>
     /// <returns>The newly-initialized file system.</returns>
-    public static NtfsFileSystem Format(
+    public static HpfsFileSystem Format(
         Stream stream,
         string label,
         Geometry diskGeometry,
@@ -1703,7 +1304,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
         long sectorCount,
         byte[] bootCode)
     {
-        var formatter = new NtfsFormatter
+        var formatter = new HpfsFormatter
         {
             Label = label,
             DiskGeometry = diskGeometry,
@@ -1724,7 +1325,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="sectorCount">The number of sectors allocated to the new file system on the disk.</param>
     /// <param name="options">The formatting options.</param>
     /// <returns>The newly-initialized file system.</returns>
-    public static NtfsFileSystem Format(
+    public static HpfsFileSystem Format(
         Stream stream,
         string label,
         Geometry diskGeometry,
@@ -1732,7 +1333,7 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
         long sectorCount,
         NtfsFormatOptions options)
     {
-        var formatter = new NtfsFormatter
+        var formatter = new HpfsFormatter
         {
             Label = label,
             DiskGeometry = diskGeometry,
@@ -1750,11 +1351,11 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="volume">The volume to format.</param>
     /// <param name="label">The label for the new file system.</param>
     /// <returns>The newly-initialized file system.</returns>
-    public static NtfsFileSystem Format(
+    public static HpfsFileSystem Format(
         VolumeInfo volume,
         string label)
     {
-        var formatter = new NtfsFormatter
+        var formatter = new HpfsFormatter
         {
             Label = label,
             DiskGeometry = volume.BiosGeometry != default ? volume.BiosGeometry : Geometry.Null,
@@ -1771,12 +1372,12 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="label">The label for the new file system.</param>
     /// <param name="bootCode">The Operating System's boot code.</param>
     /// <returns>The newly-initialized file system.</returns>
-    public static NtfsFileSystem Format(
+    public static HpfsFileSystem Format(
         VolumeInfo volume,
         string label,
         byte[] bootCode)
     {
-        var formatter = new NtfsFormatter
+        var formatter = new HpfsFormatter
         {
             Label = label,
             DiskGeometry = volume.BiosGeometry != default ? volume.BiosGeometry : Geometry.Null,
@@ -1794,12 +1395,12 @@ public sealed class NtfsFileSystem : DiscFileSystem, IClusterBasedFileSystem,
     /// <param name="label">The label for the new file system.</param>
     /// <param name="options">The formatting options.</param>
     /// <returns>The newly-initialized file system.</returns>
-    public static NtfsFileSystem Format(
+    public static HpfsFileSystem Format(
         VolumeInfo volume,
         string label,
         NtfsFormatOptions options)
     {
-        var formatter = new NtfsFormatter
+        var formatter = new HpfsFormatter
         {
             Label = label,
             DiskGeometry = volume.BiosGeometry != default ? volume.BiosGeometry : Geometry.Null,

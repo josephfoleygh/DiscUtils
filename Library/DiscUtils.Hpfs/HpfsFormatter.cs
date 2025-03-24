@@ -29,12 +29,12 @@ using DiscUtils.Streams;
 
 namespace DiscUtils.Hpfs;
 
-internal class NtfsFormatter
+internal class HpfsFormatter
 {
     private long _bitmapCluster;
     private int _clusterSize;
 
-    private NtfsContext _context;
+    private HpfsContext _context;
     private int _indexBufferSize;
     private long _mftCluster;
     private long _mftMirrorCluster;
@@ -52,11 +52,11 @@ internal class NtfsFormatter
 
     public long SectorCount { get; set; }
 
-    public NtfsFileSystem Format(Stream stream)
+    public HpfsFileSystem Format(Stream stream)
     {
-        _context = new NtfsContext
+        _context = new HpfsContext
         {
-            Options = new NtfsOptions(),
+            Options = new HpfsOptions(),
             RawStream = stream,
             AttributeDefinitions = new AttributeDefinitions()
         };
@@ -229,7 +229,7 @@ internal class NtfsFormatter
         }
 
         // XP-style security permissions setup
-        var ntfs = new NtfsFileSystem(stream);
+        var ntfs = new HpfsFileSystem(stream);
 
         ntfs.SetSecurity(@"$MFT",
             new RawSecurityDescriptor($"O:{localAdminString}G:BAD:(A;;FR;;;SY)(A;;FR;;;BA)"));

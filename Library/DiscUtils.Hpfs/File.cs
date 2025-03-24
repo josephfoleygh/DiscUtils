@@ -1227,7 +1227,7 @@ internal class File
                 && info.FileAttributes.HasFlag(NtfsFileAttributes.ReparsePoint)
                 && file.GetStream(AttributeType.ReparsePoint, null) is { } reparseStream
                 && reparseStream.GetContent<ReparsePointRecord>() is { } reparsePoint
-                && NtfsFileSystem.ReparsePlugins.TryGetValue(reparsePoint.Tag, out var reparseHandler)
+                && HpfsFileSystem.ReparsePlugins.TryGetValue(reparsePoint.Tag, out var reparseHandler)
                 && reparseHandler(file, info, attr, access, reparseStream, reparsePoint) is { } reparseResult)
             {
                 _wrapped = reparseResult;

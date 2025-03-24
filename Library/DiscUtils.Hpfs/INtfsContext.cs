@@ -26,7 +26,7 @@ internal interface INtfsContext
 
     ObjectIds ObjectIds { get; }
 
-    NtfsOptions Options { get; }
+    HpfsOptions Options { get; }
 
     Quotas Quotas { get; }
     Stream RawStream { get; }

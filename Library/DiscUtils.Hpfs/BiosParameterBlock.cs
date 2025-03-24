@@ -23,46 +23,25 @@
 using System;
 using System.Buffers;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using DiscUtils.Streams;
 
 namespace DiscUtils.Hpfs;
 
 // Dos 4 bpb - https://en.wikipedia.org/wiki/BIOS_parameter_block
-/*
-DOS 2.0 BPB
-Main article: DOS 2.0 BPB
-Format of standard DOS 2.0 BPB for FAT12 (13 bytes):
-
-Sector offset	BPB offset	Field length	Description
-0x00B	0x00	WORD	Bytes per logical sector
-0x00D	0x02	BYTE	Logical sectors per cluster
-0x00E	0x03	WORD	Reserved logical sectors
-0x010	0x05	BYTE	Number of FATs
-0x011	0x06	WORD	Root directory entries
-0x013	0x08	WORD	Total logical sectors
-0x015	0x0A	BYTE	Media descriptor
-0x016	0x0B	WORD	Logical sectors per FAT
-
-DOS 3.31 BPB
-Main article: DOS 3.31 BPB
-Format of standard DOS 3.31 BPB for FAT12, FAT16 and FAT16B (25 bytes):
-
-Sector offset	BPB offset	Field length	Description
-0x00B	0x00	13 BYTEs	DOS 2.0 BPB
-0x018	0x0D	WORD	Physical sectors per track (identical to DOS 3.0 BPB)
-0x01A	0x0F	WORD	Number of heads (identical to DOS 3.0 BPB)
-0x01C	0x11	DWORD	Hidden sectors (incompatible with DOS 3.0 BPB)
-0x020	0x15	DWORD	Large total logical sectors
-*/
-
-
-
 internal class BiosParameterBlock
 {
     const string HPFS_OEM_ID = "HPFS    ";
     
+    // BR Offset 0x03 - oem id 
+    private const int OemIdOffset = 0x03;
+    [MarshalAs(UnmanagedType.ByValArray, ArraySubType = UnmanagedType.U8, SizeConst = 8)]
+    public byte[] OemIdAscii;
+    public string OemId;
+
     /*
+     BS Offset, BPB Offset, Item Size, Description
     0x00B	0x00	WORD	Bytes per logical sector
     0x00D	0x02	BYTE	Logical sectors per cluster
     0x00E	0x03	WORD	Reserved logical sectors
@@ -72,61 +51,71 @@ internal class BiosParameterBlock
     0x015	0x0A	BYTE	Media descriptor
     0x016	0x0B	WORD	Logical sectors per FAT
     */
-    
+
+    private const int BytesPerSectorOffset = 0x0B;
     public ushort BytesPerSector;
+    private const int SectorsPerClusterOffset = 0x0D;
     public int SectorsPerCluster;
-    public ushort SectorsPerTrack; // Value: 0x3F 0x00
-    public byte FatCount;
-
-    public byte BiosDriveNumber; // Value: 0x80 (first hard disk)
-    public ushort RootDirectoryEntries;
-    public 
-    public uint HiddenSectors; // Value: 0x3F 0x00 0x00 0x00
-    public byte Media; // Must be 0xF8
-    public long MftCluster;
-    public long MftMirrorCluster;
+    private const int ReservedSectorsOffset = 0x0E;
+    private ushort ReservedSectors; // Must be 0
+    private const int NumFatsOffset = 0x10;
     public byte NumFats; // Must be 0
-    public ushort NumHeads; // Value: 0xFF 0x00
-    public string OemId;
-    public byte PaddingByte; // Value: 0x00
-    public byte RawIndexBufferSize;
-    public byte RawMftRecordSize;
-    public ushort ReservedSectors; // Must be 0
-
-    public byte SignatureByte; // Value: 0x80
+    private const int NumRootDirectoryEntriesOffset = 0x11;
+    public ushort NumRootDirectoryEntries;
+    private const int TotalSectorsOffset = 0x13;
     public ushort TotalSectors16; // Must be 0
-    public uint TotalSectors32; // Must be 0
-    public long TotalSectors64;
+    private const int MediaOffset = 0x15;
+    public byte Media; // Must be 0xF8
+    private const int SectorsPerFatOffset = 0x16;
+    public ushort SectorsPerFat;
+    
+    /*
+     * DOS 3.31 BPB
+       Main article: DOS 3.31 BPB
+       Format of standard DOS 3.31 BPB for FAT12, FAT16 and FAT16B (25 bytes):
+       
+       Sector offset	BPB offset	Field length	Description
+       0x00B	0x00	13 BYTEs	DOS 2.0 BPB
+       0x018	0x0D	WORD	Physical sectors per track (identical to DOS 3.0 BPB)
+       0x01A	0x0F	WORD	Number of heads (identical to DOS 3.0 BPB)
+       0x01C	0x11	DWORD	Hidden sectors (incompatible with DOS 3.0 BPB)
+       0x020	0x15	DWORD	Large total logical sectors
+     */
+    private const int SectorsPerTrackOffset = 0x18;
+    public ushort SectorsPerTrack; // Value: 0x3F 0x00
+    private const int NumHeadsPerCylinderOffset = 0x1A;
+    public ushort NumHeadsPerCylinder; // Value: 0xFF 0x00
+    private const int HiddenSectorsOffset = 0x1C;
+    public uint HiddenSectors; // Value: 0x3F 0x00 0x00 0x00
+    private const int TotalSectors32Offset = 0x20;
+    public uint TotalSectors32; // Size of partition
+    
+    /*
+     * BS Offset 0x24
+     */
+    private const int BiosDriveNumberOffset = 0x24;
+    public byte BiosDriveNumber; // Value: 0x80 (first hard disk)
+    // BS Offset 0x25
+    private const int PaddingByteOffset = 0x25;
+    public byte PaddingByte; // Value: 0x00
+    // BS Offset 0x26
+    private const int SignatureByte28hOffset = 0x26;
+    public byte SignatureByte28h; // 0x28h    
+    // BS Offset 0x27
+    private const int VolumeSerialNumberOffset = 0x27;
     public ulong VolumeSerialNumber;
 
-    private ushort _bpbBkBootSec;
-
-    private ushort _bpbBytesPerSec;
-    private ushort _bpbExtFlags;
-    private ushort _bpbFATSz16;
-
-    private uint _bpbFATSz32;
-    private ushort _bpbFSInfo;
-    private ushort _bpbFSVer;
-    private uint _bpbHiddSec;
-    private ushort _bpbNumHeads;
-    private uint _bpbRootClus;
-    private ushort _bpbRootEntCnt;
-    private ushort _bpbRsvdSecCnt;
-    private ushort _bpbSecPerTrk;
-    private ushort _bpbTotSec16;
-    private uint _bpbTotSec32;
-
-    private byte _bsBootSig;
-    private uint _bsVolId;
-    private string _bsVolLab;
+    [MarshalAs(UnmanagedType.ByValArray, ArraySubType = UnmanagedType.U8, SizeConst = 11)]
+    public byte[] VolumeLabelAscii; // 11 bytes
+    public string VolumeLabel;
     
+    [MarshalAs(UnmanagedType.ByValArray, ArraySubType = UnmanagedType.U8, SizeConst = 8)]
+    public byte[] SignatureHpfsAscii; // 8 bytes, /* "HPFS    " */
+    public string SignatureHpfs;
+    
+    // Calculated
     public int BytesPerCluster => BytesPerSector * SectorsPerCluster;
-
-    public int IndexBufferSize => CalcRecordSize(RawIndexBufferSize);
-
-    public int MftRecordSize => CalcRecordSize(RawMftRecordSize);
-
+    
     public void Dump(TextWriter writer, string linePrefix)
     {
         writer.WriteLine($"{linePrefix}BIOS PARAMETER BLOCK (BPB)");
@@ -135,20 +124,16 @@ internal class BiosParameterBlock
         writer.WriteLine($"{linePrefix}   Sectors per Cluster: {SectorsPerCluster}");
         writer.WriteLine($"{linePrefix}      Reserved Sectors: {ReservedSectors}");
         writer.WriteLine($"{linePrefix}                # FATs: {NumFats}");
-        writer.WriteLine($"{linePrefix}    # FAT Root Entries: {FatRootEntriesCount}");
+        writer.WriteLine($"{linePrefix}    # FAT Root Entries: {NumRootDirectoryEntriesOffset}");
         writer.WriteLine($"{linePrefix}   Total Sectors (16b): {TotalSectors16}");
         writer.WriteLine($"{linePrefix}                 Media: {Media:X}h");
-        writer.WriteLine($"{linePrefix}        FAT size (16b): {FatSize16}");
         writer.WriteLine($"{linePrefix}     Sectors per Track: {SectorsPerTrack}");
-        writer.WriteLine($"{linePrefix}               # Heads: {NumHeads}");
+        writer.WriteLine($"{linePrefix}               # Heads: {NumHeadsPerCylinder}");
         writer.WriteLine($"{linePrefix}        Hidden Sectors: {HiddenSectors}");
         writer.WriteLine($"{linePrefix}   Total Sectors (32b): {TotalSectors32}");
         writer.WriteLine($"{linePrefix}     BIOS Drive Number: {BiosDriveNumber}");
-        writer.WriteLine($"{linePrefix}          Chkdsk Flags: {ChkDskFlags}");
-        writer.WriteLine($"{linePrefix}        Signature Byte: {SignatureByte}");
-        writer.WriteLine($"{linePrefix}   Total Sectors (64b): {TotalSectors64}");
-        writer.WriteLine($"{linePrefix}       MFT Record Size: {RawMftRecordSize}");
-        writer.WriteLine($"{linePrefix}     Index Buffer Size: {RawIndexBufferSize}");
+        writer.WriteLine($"{linePrefix}        Signature Byte: {SignatureByte28h}");
+        writer.WriteLine($"{linePrefix}        HPFS Signature: {SignatureHpfs}");
         writer.WriteLine($"{linePrefix}  Volume Serial Number: {VolumeSerialNumber}");
     }
 
@@ -160,64 +145,53 @@ internal class BiosParameterBlock
             OemId = HPFS_OEM_ID,
             BytesPerSector = Sizes.Sector
         };
-        bpb.SectorsPerCluster = clusterSize / bpb.BytesPerSector;
+        bpb.SectorsPerCluster = Convert.ToByte(clusterSize / bpb.BytesPerSector);
         bpb.ReservedSectors = 0;
         bpb.NumFats = 0;
-        bpb.FatRootEntriesCount = 0;
+        bpb.NumRootDirectoryEntries = 0;
         bpb.TotalSectors16 = 0;
         bpb.Media = 0xF8;
-        bpb.FatSize16 = 0;
         bpb.SectorsPerTrack = (ushort)diskGeometry.SectorsPerTrack;
-        bpb.NumHeads = (ushort)diskGeometry.HeadsPerCylinder;
+        bpb.NumHeadsPerCylinder = (ushort)diskGeometry.HeadsPerCylinder;
         bpb.HiddenSectors = partitionStartLba;
         bpb.TotalSectors32 = 0;
         bpb.BiosDriveNumber = 0x80;
-        bpb.ChkDskFlags = 0;
-        bpb.SignatureByte = 0x80;
+        bpb.SignatureByte28h = 0x28;
         bpb.PaddingByte = 0;
-        bpb.TotalSectors64 = partitionSizeLba - 1;
-        bpb.RawMftRecordSize = bpb.CodeRecordSize(mftRecordSize);
-        bpb.RawIndexBufferSize = bpb.CodeRecordSize(indexBufferSize);
-        bpb.VolumeSerialNumber = GenSerialNumber();
+        //bpb.VolumeSerialNumber;
 
         return bpb;
     }
 
+    // Takes bootsector as a span
     internal static BiosParameterBlock FromBytes(ReadOnlySpan<byte> bytes)
     {
         var latin1Encoding = EncodingUtilities.GetLatin1Encoding();
 
         var bpb = new BiosParameterBlock
         {
-            OemId = latin1Encoding.GetString(bytes.Slice(0x03, 8)),
-            BytesPerSector = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(0x0B)),
-            TotalSectors16 = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(0x13)),
-            TotalSectors32 = EndianUtilities.ToUInt32LittleEndian(bytes.Slice(0x20)),
-            SignatureByte = bytes[0x26],
-            TotalSectors64 = EndianUtilities.ToInt64LittleEndian(bytes.Slice(0x28)),
-            MftCluster = EndianUtilities.ToInt64LittleEndian(bytes.Slice(0x30)),
-            RawMftRecordSize = bytes[0x40],
-            SectorsPerCluster = DecodeSingleByteSize(bytes[0x0D])
+            OemId = latin1Encoding.GetString(bytes.Slice(OemIdOffset, 8)),
+            BytesPerSector = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(BytesPerSectorOffset, 2)),
+            TotalSectors16 = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(TotalSectorsOffset)),
+            TotalSectors32 = EndianUtilities.ToUInt32LittleEndian(bytes.Slice(TotalSectors32Offset)),
+            SignatureByte28h = bytes[SignatureByte28hOffset],
+            SectorsPerCluster = DecodeSingleByteSize(bytes[SectorsPerClusterOffset])
         };
         if (!bpb.IsValid(long.MaxValue))
         {
             return bpb;
         }
 
-        bpb.ReservedSectors = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(0x0E));
-        bpb.NumFats = bytes[0x10];
-        bpb.FatRootEntriesCount = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(0x11));
-        bpb.Media = bytes[0x15];
-        bpb.FatSize16 = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(0x16));
-        bpb.SectorsPerTrack = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(0x18));
-        bpb.NumHeads = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(0x1A));
-        bpb.HiddenSectors = EndianUtilities.ToUInt32LittleEndian(bytes.Slice(0x1C));
-        bpb.BiosDriveNumber = bytes[0x24];
-        bpb.ChkDskFlags = bytes[0x25];
-        bpb.PaddingByte = bytes[0x27];
-        bpb.MftMirrorCluster = EndianUtilities.ToInt64LittleEndian(bytes.Slice(0x38));
-        bpb.RawIndexBufferSize = bytes[0x44];
-        bpb.VolumeSerialNumber = EndianUtilities.ToUInt64LittleEndian(bytes.Slice(0x48));
+        bpb.ReservedSectors = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(ReservedSectorsOffset));
+        bpb.NumFats = bytes[NumFatsOffset];
+        bpb.NumRootDirectoryEntries = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(NumRootDirectoryEntriesOffset));
+        bpb.Media = bytes[MediaOffset];
+        bpb.SectorsPerTrack = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(SectorsPerTrackOffset));
+        bpb.NumHeadsPerCylinder = EndianUtilities.ToUInt16LittleEndian(bytes.Slice(NumHeadsPerCylinderOffset));
+        bpb.HiddenSectors = EndianUtilities.ToUInt32LittleEndian(bytes.Slice(HiddenSectorsOffset));
+        bpb.BiosDriveNumber = bytes[BiosDriveNumberOffset];
+        bpb.PaddingByte = bytes[PaddingByteOffset];
+        bpb.VolumeSerialNumber = EndianUtilities.ToUInt64LittleEndian(bytes.Slice(VolumeSerialNumberOffset));
 
         return bpb;
     }
@@ -226,29 +200,22 @@ internal class BiosParameterBlock
     {
         var latin1Encoding = EncodingUtilities.GetLatin1Encoding();
 
-        latin1Encoding.GetBytes(OemId, buffer.Slice(0x03, 8));
-        EndianUtilities.WriteBytesLittleEndian(BytesPerSector, buffer.Slice(0x0B));
-        buffer[0x0D] = EncodeSingleByteSize(SectorsPerCluster);
-        EndianUtilities.WriteBytesLittleEndian(ReservedSectors, buffer.Slice(0x0E));
-        buffer[0x10] = NumFats;
-        EndianUtilities.WriteBytesLittleEndian(FatRootEntriesCount, buffer.Slice(0x11));
-        EndianUtilities.WriteBytesLittleEndian(TotalSectors16, buffer.Slice(0x13));
-        buffer[0x15] = Media;
-        EndianUtilities.WriteBytesLittleEndian(FatSize16, buffer.Slice(0x16));
-        EndianUtilities.WriteBytesLittleEndian(SectorsPerTrack, buffer.Slice(0x18));
-        EndianUtilities.WriteBytesLittleEndian(NumHeads, buffer.Slice(0x1A));
-        EndianUtilities.WriteBytesLittleEndian(HiddenSectors, buffer.Slice(0x1C));
-        EndianUtilities.WriteBytesLittleEndian(TotalSectors32, buffer.Slice(0x20));
-        buffer[0x24] = BiosDriveNumber;
-        buffer[0x25] = ChkDskFlags;
-        buffer[0x26] = SignatureByte;
-        buffer[0x27] = PaddingByte;
-        EndianUtilities.WriteBytesLittleEndian(TotalSectors64, buffer.Slice(0x28));
-        EndianUtilities.WriteBytesLittleEndian(MftCluster, buffer.Slice(0x30));
-        EndianUtilities.WriteBytesLittleEndian(MftMirrorCluster, buffer.Slice(0x38));
-        buffer[0x40] = RawMftRecordSize;
-        buffer[0x44] = RawIndexBufferSize;
-        EndianUtilities.WriteBytesLittleEndian(VolumeSerialNumber, buffer.Slice(0x48));
+        latin1Encoding.GetBytes(OemId, buffer.Slice(OemIdOffset, 8));
+        EndianUtilities.WriteBytesLittleEndian(BytesPerSector, buffer.Slice(BytesPerSectorOffset, 8));
+        buffer[SectorsPerClusterOffset] = EncodeSingleByteSize(SectorsPerCluster);
+        EndianUtilities.WriteBytesLittleEndian(ReservedSectors, buffer.Slice(ReservedSectorsOffset, 8));
+        buffer[NumFatsOffset] = NumFats;
+        EndianUtilities.WriteBytesLittleEndian(NumRootDirectoryEntries, buffer.Slice(NumRootDirectoryEntriesOffset, 8));
+        EndianUtilities.WriteBytesLittleEndian(TotalSectors16, buffer.Slice(TotalSectors16));
+        buffer[MediaOffset] = Media;
+        EndianUtilities.WriteBytesLittleEndian(SectorsPerTrack, buffer.Slice(SectorsPerTrackOffset, 8));
+        EndianUtilities.WriteBytesLittleEndian(NumHeadsPerCylinder, buffer.Slice(NumHeadsPerCylinderOffset, 8));
+        EndianUtilities.WriteBytesLittleEndian(HiddenSectors, buffer.Slice(HiddenSectorsOffset));
+        EndianUtilities.WriteBytesLittleEndian(TotalSectors32, buffer.Slice(TotalSectors32Offset));
+        buffer[BiosDriveNumberOffset] = BiosDriveNumber;
+        buffer[SignatureByte28hOffset] = SignatureByte28h;
+        buffer[PaddingByteOffset] = PaddingByte;
+        EndianUtilities.WriteBytesLittleEndian(VolumeSerialNumber, buffer.Slice(VolumeSerialNumberOffset));
     }
 
     internal static int DecodeSingleByteSize(byte rawSize)
@@ -294,6 +261,12 @@ internal class BiosParameterBlock
                 && string.Compare(OemId, 0, HPFS_OEM_ID, 0, HPFS_OEM_ID.Length) == 0);
     }
 
+    internal bool IsValidHpfsSignature()
+    {
+        return (!string.IsNullOrEmpty(SignatureHpfs) && SignatureHpfs.Length == HPFS_OEM_ID.Length
+                                             && string.Compare(SignatureHpfs, 0, HPFS_OEM_ID, 0, HPFS_OEM_ID.Length) == 0);
+    }
+
     internal bool IsValid(long volumeSize)
     {
         /*
@@ -302,14 +275,13 @@ internal class BiosParameterBlock
          *
          * Let's rather check OemId here, so we don't fail hard.
          */
-        if (!IsValidOemId() || TotalSectors16 != 0 || TotalSectors32 != 0
-            || TotalSectors64 == 0 || MftRecordSize == 0 || MftCluster == 0 || BytesPerSector == 0)
+        if (!IsValidOemId() || IsValidHpfsSignature() || TotalSectors16 != 0 || TotalSectors32 != 0)
         {
             return false;
         }
 
-        var mftPos = MftCluster * SectorsPerCluster * BytesPerSector;
-        return mftPos < TotalSectors64 * BytesPerSector && mftPos < volumeSize;
+        // TODO: need validation of location of super, spare and rootdir
+        return true;
     }
 
 #if NETSTANDARD2_1_OR_GREATER || NETCOREAPP

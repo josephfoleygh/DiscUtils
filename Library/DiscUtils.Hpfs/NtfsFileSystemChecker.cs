@@ -37,7 +37,7 @@ public sealed class NtfsFileSystemChecker : DiscFileSystemChecker
 {
     private readonly Stream _target;
 
-    private NtfsContext _context;
+    private HpfsContext _context;
     private TextWriter _report;
     private ReportLevels _reportLevels;
 
@@ -64,10 +64,10 @@ public sealed class NtfsFileSystemChecker : DiscFileSystemChecker
     /// <returns><c>true</c> if the file system appears valid, else <c>false</c>.</returns>
     public override bool Check(TextWriter reportOutput, ReportLevels levels)
     {
-        _context = new NtfsContext
+        _context = new HpfsContext
         {
             RawStream = _target,
-            Options = new NtfsOptions()
+            Options = new HpfsOptions()
         };
 
         _report = reportOutput;
@@ -98,10 +98,10 @@ public sealed class NtfsFileSystemChecker : DiscFileSystemChecker
     /// <returns>The cluster map.</returns>
     public ClusterMap BuildClusterMap()
     {
-        _context = new NtfsContext
+        _context = new HpfsContext
         {
             RawStream = _target,
-            Options = new NtfsOptions()
+            Options = new HpfsOptions()
         };
 
         _context.RawStream.Position = 0;
@@ -175,7 +175,7 @@ public sealed class NtfsFileSystemChecker : DiscFileSystemChecker
         //
 
         // Temporary...
-        using var fs = new NtfsFileSystem(_context.RawStream);
+        using var fs = new HpfsFileSystem(_context.RawStream);
         if ((_reportLevels & ReportLevels.Information) != 0)
         {
             ReportDump(fs);
@@ -608,7 +608,7 @@ public sealed class NtfsFileSystemChecker : DiscFileSystemChecker
         return ok;
     }
 
-    private void ReportDump(NtfsFileSystem toDump)
+    private void ReportDump(HpfsFileSystem toDump)
     {
         _levelsDetected |= ReportLevels.Information;
         if ((_reportLevels & ReportLevels.Information) != 0)
